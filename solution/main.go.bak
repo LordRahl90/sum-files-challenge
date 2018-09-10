@@ -1,0 +1,103 @@
+package main
+
+import (
+	"bufio"
+	"fmt"
+	"io/ioutil"
+	"log"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+)
+
+const watchedPath = "./file_test/"
+
+func main() {
+
+	start := time.Now()
+	var lineStringChannel = make(chan string, 10)
+	var lineSlice = make(chan []string, 10)
+	var totalChannel = make(chan int64, 1)
+	var mainTotalChannel = make(chan int64, 1)
+	var done = make(chan bool)
+	var fileProcessed = make(chan int)
+	// var processedFile []int
+
+	folders, err := ioutil.ReadDir(watchedPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for _, f := range folders {
+		if f.IsDir() {
+			folderPath := watchedPath + f.Name()
+			fileDetails, err := ioutil.ReadDir(folderPath)
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			go func() {
+				for _, files := range fileDetails {
+					fileName := folderPath + "/" + files.Name()
+					go getLineItem(fileName, lineStringChannel)
+				}
+			}()
+		} else {
+			fmt.Println("Ordinary files seen.")
+		}
+	}
+
+	go func() {
+		for lineString := range lineStringChannel {
+			line := strings.Split(lineString, ",")
+			lineSlice <- line
+		}
+	}()
+
+	go func() {
+		for eachSlice := range lineSlice {
+			total := sumTheSlice(eachSlice)
+			totalChannel <- total
+		}
+	}()
+
+	go func() {
+		for eachLineTotal := range totalChannel {
+			currentMainTotal := <-mainTotalChannel
+			newMainTotal := currentMainTotal + eachLineTotal
+			mainTotalChannel <- newMainTotal
+			// fmt.Printf("Current Total is: %d New Line Total is: %d and the current main total is: %d\n", currentMainTotal, eachLineTotal, newMainTotal)
+		}
+	}()
+
+	elapsed := time.Since(start)
+	fmt.Println("Time Taken is: ", elapsed.String())
+	<-done
+	fmt.Println("Everything is done.")
+}
+
+func getLineItem(filename string, lineStringChannel chan string, fileProcess chan int) {
+	file, err := os.Open(filename)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		lineString := scanner.Text()
+		lineStringChannel <- lineString
+	}
+
+	fmt.Println("Pushing to processing file.")
+	fileProcess <- 1
+}
+
+func sumTheSlice(slice []string) (total int64) {
+	for _, r := range slice {
+		t, _ := strconv.ParseInt(r, 10, 64)
+		total += t
+	}
+	return
+}
